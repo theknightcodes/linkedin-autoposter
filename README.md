@@ -8,41 +8,25 @@
 
 ## Table of Contents
 
-- [LinkedIn Auto - AI Tips and tricks Daily Poster](#linkedin-auto---ai-tips-and-tricks-daily-poster)
-  - [Table of Contents](#table-of-contents)
-  - [Overview](#overview)
-  - [How It Works](#how-it-works)
-  - [Prerequisites](#prerequisites)
-  - [LinkedIn App Setup](#linkedin-app-setup)
-    - [Step 1 — Create a Company Page (if you don't have one)](#step-1--create-a-company-page-if-you-dont-have-one)
-    - [Step 2 — Create a Developer App](#step-2--create-a-developer-app)
-    - [Step 3 — Add Required Products](#step-3--add-required-products)
-    - [Step 4 — Add Redirect URI](#step-4--add-redirect-uri)
-    - [Step 5 — Copy credentials to `.env`](#step-5--copy-credentials-to-env)
-  - [Installation](#installation)
-  - [Finding Your LinkedIn Person URN](#finding-your-linkedin-person-urn)
-    - [Option A — Automatic (recommended)](#option-a--automatic-recommended)
-    - [Option B — From page source](#option-b--from-page-source)
-    - [Option C — From the API error message](#option-c--from-the-api-error-message)
-  - [Running the Poster](#running-the-poster)
-  - [Scheduling Options](#scheduling-options)
-    - [Option A — GitHub Actions (recommended — fully autonomous)](#option-a--github-actions-recommended--fully-autonomous)
-    - [Option B — macOS launchd](#option-b--macos-launchd)
-    - [Option C — Cron](#option-c--cron)
-  - [GitHub Actions Pipeline — Deep Dive](#github-actions-pipeline--deep-dive)
-    - [How the Pipeline Works](#how-the-pipeline-works)
-    - [Secrets vs Variables — What's the Difference?](#secrets-vs-variables--whats-the-difference)
-    - [Complete Secrets Reference](#complete-secrets-reference)
-    - [Setting Up Secrets (Step by Step)](#setting-up-secrets-step-by-step)
-    - [Updating a Secret](#updating-a-secret)
-    - [Triggering a Manual Run](#triggering-a-manual-run)
-    - [Viewing Run Logs](#viewing-run-logs)
-  - [Customising Your Posts](#customising-your-posts)
-  - [Token Lifecycle](#token-lifecycle)
-  - [Project Structure](#project-structure)
-  - [Troubleshooting](#troubleshooting)
-  - [Known Gotchas](#known-gotchas)
-  - [License](#license)
+- [Overview](#overview)
+- [How It Works](#how-it-works)
+- [Prerequisites](#prerequisites)
+- [LinkedIn App Setup](#linkedin-app-setup)
+- [Installation](#installation)
+- [Finding Your LinkedIn Person URN](#finding-your-linkedin-person-urn)
+- [Running the Poster](#running-the-poster)
+- [GitHub Actions Pipeline](#github-actions-pipeline)
+  - [How the Pipeline Works](#how-the-pipeline-works)
+  - [Secrets vs Variables — What's the Difference?](#secrets-vs-variables--whats-the-difference)
+  - [Complete Secrets Reference](#complete-secrets-reference)
+  - [Setting Up Secrets (Step by Step)](#setting-up-secrets-step-by-step)
+  - [Updating a Secret](#updating-a-secret)
+  - [Triggering a Manual Run](#triggering-a-manual-run)
+  - [Viewing Run Logs](#viewing-run-logs)
+- [Customising Your Posts](#customising-your-posts)
+- [Token Lifecycle](#token-lifecycle)
+- [Project Structure](#project-structure)
+- [License](#license)
 
 ---
 
@@ -55,14 +39,14 @@ This project posts one AI-focused LinkedIn update per day using a rotating set o
 - Smart deduplication — SHA-256 hash + 60% Jaccard similarity check against recent posts
 - Automatic OAuth token refresh — no manual re-auth for up to 365 days
 - Rotating log files, SQLite post history, and dry-run mode for safe testing
-- macOS launchd scheduling, cron, and GitHub Actions — pick what fits your setup
+- Fully autonomous GitHub Actions scheduling — no local machine required
 
 ---
 
 ## How It Works
 
 ```
-8:30 AM daily (launchd / cron / GitHub Actions)
+8:30 AM daily (GitHub Actions)
         │
         ▼
  src/main.py  ─── get_next_topic()  ──►  Round-robin across 5 topics
@@ -78,9 +62,6 @@ This project posts one AI-focused LinkedIn update per day using a rotating set o
         │
         ▼
  post_tracker.py  ──►  SQLite: record post + URN + status
-        │
-        ▼
- logs/autoposter.log  ──►  Rotating log (5 MB × 3 files)
 ```
 
 **5 rotating topics:**
@@ -99,12 +80,11 @@ This project posts one AI-focused LinkedIn update per day using a rotating set o
 
 | Requirement | Notes |
 |-------------|-------|
-| macOS | launchd scheduling; Linux/Windows users use cron or GitHub Actions |
-| conda (`/opt/miniconda3`) | Install [Miniconda](https://docs.conda.io/en/latest/miniconda.html) |
-| Python 3.11 | Managed by conda — no manual install needed |
+| Python 3.11 | Via conda or any Python 3.11+ install |
 | Google Gemini API key | Free — 1,500 requests/day. Get at [aistudio.google.com](https://aistudio.google.com/apikey) |
 | LinkedIn Developer App | Required for API access — setup guide below |
 | LinkedIn Company Page | Required to create a Developer App (free to create) |
+| GitHub account | For GitHub Actions scheduling |
 
 > **Anthropic Claude is optional.** Switch `LLM_PROVIDER=claude` in `.env` if you prefer it over Gemini.
 
@@ -162,16 +142,17 @@ cd linkedin-autoposter
 cp .env.example .env
 # Edit .env — add GEMINI_API_KEY, LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET
 
-# 3. Run the full setup script
-bash scripts/install.sh
+# 3. Install dependencies
+pip install anthropic requests flask python-dotenv google-genai
+
+# 4. Run OAuth setup (opens browser to authorise LinkedIn)
+python -m src.oauth_setup
 ```
 
-The installer will:
-- Create conda environment `linkedin-autoposter` (Python 3.11)
-- Initialise the SQLite post history database
-- Open your browser for LinkedIn OAuth (one-time)
-- Run a dry-run to verify content generation works
-- Install a macOS launchd job to post at 8:30 AM daily
+The OAuth setup will:
+- Open your browser to LinkedIn's authorisation page
+- Capture the callback and exchange it for access tokens
+- Save all tokens and your Person URN to `.env`
 
 ---
 
@@ -184,7 +165,7 @@ During OAuth setup, the app tries to auto-detect your Person URN. If it shows a 
 Run the OAuth setup after adding both LinkedIn products above:
 
 ```bash
-/opt/miniconda3/envs/linkedin-autoposter/bin/python -m src.oauth_setup
+python -m src.oauth_setup
 ```
 
 With **both** products added, it will auto-detect and save your URN.
@@ -192,8 +173,8 @@ With **both** products added, it will auto-detect and save your URN.
 ### Option B — From page source
 
 1. Open your LinkedIn profile in a browser
-2. Press `Cmd+U` (Mac) or `Ctrl+U` to view page source
-3. Search (`Cmd+F`) for `urn:li:member:`
+2. Press `Ctrl+U` to view page source
+3. Search (`Ctrl+F`) for `urn:li:member:`
 4. Note the alphanumeric value, e.g. `urn:li:member:edM1EcVerD`
 
 Then set in `.env`:
@@ -205,7 +186,7 @@ LINKEDIN_PERSON_URN=urn:li:person:edM1EcVerD
 
 ### Option C — From the API error message
 
-If your URN is unknown, send a test POST with your numeric ID in `urn:li:member:` format. The 422 error response will reveal the correct alphanumeric `urn:li:person:` URN:
+If your URN is unknown, send a test POST with your numeric ID. The 422 error response will reveal the correct alphanumeric URN:
 
 ```bash
 TOKEN=$(grep LINKEDIN_ACCESS_TOKEN .env | cut -d= -f2)
@@ -216,7 +197,7 @@ curl -s -X POST "https://api.linkedin.com/rest/posts" \
   -d '{"author": "urn:li:member:YOUR_NUMERIC_ID", "commentary": "test", "visibility": "PUBLIC", "distribution": {"feedDistribution": "MAIN_FEED", "targetEntities": [], "thirdPartyDistributionChannels": []}, "lifecycleState": "PUBLISHED", "isReshareDisabledByAuthor": false}'
 ```
 
-The error message will contain your correct URN.
+The error message will contain your correct `urn:li:person:` URN.
 
 ---
 
@@ -224,58 +205,20 @@ The error message will contain your correct URN.
 
 ```bash
 # Post immediately (live — posts to LinkedIn)
-bash scripts/post_now.sh
+python -m src.main
 
 # Dry run — generate and preview without posting
-bash scripts/post_now.sh --dry-run
+python -m src.main --dry-run
 
 # Show post history and stats
-bash scripts/post_now.sh --stats
-
-# View live logs
-tail -f logs/autoposter.log
+python -m src.main --stats
 ```
 
 ---
 
-## Scheduling Options
+## GitHub Actions Pipeline
 
-### Option A — GitHub Actions (recommended — fully autonomous)
-
-Runs entirely in the cloud. Your Mac can be off, sleeping, or on the other side of the world — the post goes out at 8:30 AM SGT every day without any intervention.
-
-See the [GitHub Actions Pipeline — Deep Dive](#github-actions-pipeline--deep-dive) section below for full setup instructions.
-
-### Option B — macOS launchd
-
-Installed automatically by `install.sh`. Best if you want local control.
-
-```bash
-# Install and enable
-cp schedule/com.linkedin.autoposter.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.linkedin.autoposter.plist
-
-# Check status
-launchctl list | grep linkedin
-
-# Disable
-launchctl unload ~/Library/LaunchAgents/com.linkedin.autoposter.plist
-```
-
-> If your Mac is asleep at 8:30 AM, launchd will catch up and post as soon as it wakes.
-
-### Option C — Cron
-
-```bash
-crontab -e
-# Paste contents of schedule/crontab.example
-```
-
----
-
-## GitHub Actions Pipeline — Deep Dive
-
-This is the recommended way to run the poster. Zero dependency on your local machine.
+This is the recommended way to run the poster. Runs entirely in the cloud — your machine can be off and posts still go out at 8:30 AM SGT every day.
 
 ### How the Pipeline Works
 
@@ -299,7 +242,7 @@ GitHub Cron Trigger (00:30 UTC = 08:30 SGT)
           │
           ▼
   python -m src.main
-    ├── generate post via Gemini/Claude
+    ├── generate post via Gemini / Claude
     ├── dedup check against SQLite history
     └── POST to LinkedIn REST API
           │
@@ -350,38 +293,38 @@ These are all the secrets the workflow needs. Set every one of them before runni
 5. Click **Add secret**
 6. Repeat for all secrets in the table above
 
-**Option 2 — GitHub CLI (fastest if you have `gh` installed)**
+**Option 2 — GitHub CLI (fastest)**
 
 ```bash
 # Install GitHub CLI: https://cli.github.com
 gh auth login
 
-# Set all secrets from your local .env in one go
-gh secret set LLM_PROVIDER          --body "gemini"           --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set GEMINI_API_KEY        --body "your_key_here"    --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_CLIENT_ID    --body "your_client_id"   --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_CLIENT_SECRET --body "your_secret"     --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_ACCESS_TOKEN  --body "your_token"      --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_REFRESH_TOKEN --body "your_refresh"    --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_TOKEN_EXPIRES_AT --body "1780184180"   --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_REFRESH_ISSUED_AT --body "1775000181"  --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_PERSON_URN   --body "urn:li:person:XYZ" --repo YOUR_USERNAME/linkedin-autoposter
+# Set each secret
+gh secret set LLM_PROVIDER             --body "gemini"                    --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set GEMINI_API_KEY           --body "your_key_here"             --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_CLIENT_ID       --body "your_client_id"            --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_CLIENT_SECRET   --body "your_secret"               --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_ACCESS_TOKEN    --body "your_token"                --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_REFRESH_TOKEN   --body "your_refresh_token"        --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_TOKEN_EXPIRES_AT  --body "1780184180"              --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_REFRESH_ISSUED_AT --body "1775000181"              --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_PERSON_URN      --body "urn:li:person:XYZ"         --repo YOUR_USERNAME/linkedin-autoposter
 ```
 
-**Option 3 — Bulk set from your local `.env` (if you've already run `oauth_setup`)**
+**Option 3 — Bulk set from your local `.env`**
 
 ```bash
-# Run this from your project root after completing local setup
+# Run this from your project root after completing local OAuth setup
 source .env
-gh secret set LLM_PROVIDER             --body "$LLM_PROVIDER"             --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set GEMINI_API_KEY           --body "$GEMINI_API_KEY"           --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_CLIENT_ID       --body "$LINKEDIN_CLIENT_ID"       --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_CLIENT_SECRET   --body "$LINKEDIN_CLIENT_SECRET"   --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_ACCESS_TOKEN    --body "$LINKEDIN_ACCESS_TOKEN"    --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_REFRESH_TOKEN   --body "$LINKEDIN_REFRESH_TOKEN"   --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LLM_PROVIDER              --body "$LLM_PROVIDER"              --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set GEMINI_API_KEY            --body "$GEMINI_API_KEY"            --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_CLIENT_ID        --body "$LINKEDIN_CLIENT_ID"        --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_CLIENT_SECRET    --body "$LINKEDIN_CLIENT_SECRET"    --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_ACCESS_TOKEN     --body "$LINKEDIN_ACCESS_TOKEN"     --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_REFRESH_TOKEN    --body "$LINKEDIN_REFRESH_TOKEN"    --repo YOUR_USERNAME/linkedin-autoposter
 gh secret set LINKEDIN_TOKEN_EXPIRES_AT --body "$LINKEDIN_TOKEN_EXPIRES_AT" --repo YOUR_USERNAME/linkedin-autoposter
 gh secret set LINKEDIN_REFRESH_ISSUED_AT --body "$LINKEDIN_REFRESH_ISSUED_AT" --repo YOUR_USERNAME/linkedin-autoposter
-gh secret set LINKEDIN_PERSON_URN      --body "$LINKEDIN_PERSON_URN"      --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_PERSON_URN       --body "$LINKEDIN_PERSON_URN"       --repo YOUR_USERNAME/linkedin-autoposter
 ```
 
 **Verify all secrets are set:**
@@ -392,16 +335,16 @@ gh secret list --repo YOUR_USERNAME/linkedin-autoposter
 
 ### Updating a Secret
 
-When your LinkedIn access token refreshes (every ~60 days), update the secret:
+When your LinkedIn access token refreshes (every ~60 days), re-run OAuth locally and sync the new values:
 
 ```bash
-# After running oauth_setup locally, sync the new token to GitHub
+python -m src.oauth_setup   # updates your local .env
 source .env
-gh secret set LINKEDIN_ACCESS_TOKEN    --body "$LINKEDIN_ACCESS_TOKEN"    --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_ACCESS_TOKEN     --body "$LINKEDIN_ACCESS_TOKEN"     --repo YOUR_USERNAME/linkedin-autoposter
 gh secret set LINKEDIN_TOKEN_EXPIRES_AT --body "$LINKEDIN_TOKEN_EXPIRES_AT" --repo YOUR_USERNAME/linkedin-autoposter
 ```
 
-> Or update via the GitHub web UI: **Settings → Secrets and variables → Actions → click the secret → Update**.
+> Or update via GitHub web UI: **Settings → Secrets and variables → Actions → click the secret → Update**.
 
 ### Triggering a Manual Run
 
@@ -430,7 +373,7 @@ gh run watch --repo YOUR_USERNAME/linkedin-autoposter
 gh run view --repo YOUR_USERNAME/linkedin-autoposter --log | grep -E "INFO|ERROR|Posted"
 ```
 
-Or open the Actions tab on GitHub for a visual view of every run, step by step.
+Or open the **Actions** tab on GitHub for a visual step-by-step view of every run.
 
 ---
 
@@ -453,11 +396,7 @@ No code changes needed — the prompt file is loaded fresh on every run.
 | Access token | ~60 days | Auto-refreshed when < 24h remaining |
 | Refresh token | ~365 days | Warning logged 30 days before expiry |
 
-When the refresh token approaches expiry (⚠️ warning in logs), re-run:
-
-```bash
-/opt/miniconda3/envs/linkedin-autoposter/bin/python -m src.oauth_setup
-```
+When the refresh token approaches expiry (⚠️ warning in logs), re-run `python -m src.oauth_setup` locally and update the secrets in GitHub.
 
 ---
 
@@ -480,48 +419,15 @@ linkedin-autoposter/
 │   ├── test_post_tracker.py
 │   └── test_token_manager.py
 ├── scripts/
-│   ├── install.sh               # Full one-time setup
-│   └── post_now.sh              # Manual trigger
-├── schedule/
-│   ├── com.linkedin.autoposter.plist   # macOS launchd config
-│   └── crontab.example
+│   └── post_now.sh              # Manual trigger (local)
 ├── tasks/
-│   └── lessons.md               # Debugging notes & known gotchas
+│   └── lessons.md               # Debugging notes & lessons learned
 ├── .github/
 │   └── workflows/daily_post.yml # GitHub Actions schedule
 ├── environment.yml              # Conda environment spec
 ├── .env.example                 # Credential template (copy to .env)
 └── posts.db                     # SQLite post history (auto-created, git-ignored)
 ```
-
-
----
-
-## Troubleshooting
-
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `HTTP 426 NONEXISTENT_VERSION` | `LinkedIn-Version` header is expired | Update `LinkedIn-Version` in `src/linkedin_client.py` to current `YYYYMM` (e.g. `202601`) |
-| `HTTP 403` on POST | Missing `w_member_social` scope | Add **"Share on LinkedIn"** product in LinkedIn Developer Portal, then re-run `oauth_setup.py` |
-| `HTTP 422 DUPLICATE_POST` | Same content posted twice (retry after silent 201) | Already handled — deduplication in `post_tracker.py` prevents future duplicates |
-| `Person URN not found` during OAuth | `w_member_social` alone doesn't expose profile | Add **"Sign In with LinkedIn using OpenID Connect"** product, or set URN manually — see [Finding Your Person URN](#finding-your-linkedin-person-urn) |
-| `conda run` uses wrong Python | Homebrew Python on PATH overrides conda env | Use `/opt/miniconda3/envs/linkedin-autoposter/bin/python` directly |
-| `ModuleNotFoundError: dotenv` | Same as above — wrong Python interpreter | Use full path to conda env Python |
-| GitHub Actions run fails silently | Missing or incorrect secret value | Run `gh secret list` to verify all 9 secrets exist, check logs for which key is missing |
-| Token expired in GitHub Actions | Access token rotated but secret not updated | Re-run `oauth_setup.py` locally, then update `LINKEDIN_ACCESS_TOKEN` and `LINKEDIN_TOKEN_EXPIRES_AT` secrets |
-
----
-
-## Known Gotchas
-
-See [`tasks/lessons.md`](tasks/lessons.md) for the full debugging journal. Key points:
-
-- **LinkedIn REST API uses alphanumeric Person URNs** — the numeric ID from your profile URL (`urn:li:member:12345`) maps to an alphanumeric form (`urn:li:person:abcXYZ`). Use the alphanumeric form in `.env` and GitHub Secrets.
-- **LinkedIn 201 response has an empty body** — the post URN is in the `x-restli-id` response header, not the body. Don't try to parse it as JSON.
-- **`LinkedIn-Version` header has a shelf life** — bump it to the current `YYYYMM` when you see a 426 error.
-- **Both LinkedIn products are required** — "Share on LinkedIn" for posting + "Sign In with OpenID Connect" for auto-detecting your Person URN during setup.
-- **GitHub Secrets are write-only** — once saved you cannot read the value back. Keep a local copy in your `.env` file.
-- **posts.db is cached between GitHub Actions runs** — this preserves your post history and deduplication across days. If the cache is ever lost, the bot will continue posting but may occasionally regenerate similar content.
 
 ---
 
