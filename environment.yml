@@ -1,0 +1,13 @@
+name: linkedin-autoposter
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - anthropic>=0.30.0
+    - requests>=2.31.0
+    - flask>=3.0.0
+    - python-dotenv>=1.0.0
+    - pytest>=7.4.0

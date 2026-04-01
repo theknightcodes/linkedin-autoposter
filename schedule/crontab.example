@@ -1,0 +1,6 @@
+# LinkedIn Autoposter — crontab entry
+# Add with: crontab -e
+# Posts daily at 8:30 AM
+
+30 8 * * * cd /Users/dhamotharanpalanisamy/projects/linkedin-autoposter && \
+  /opt/miniconda3/envs/linkedin-autoposter/bin/python -m src.main >> logs/cron.log 2>&1
