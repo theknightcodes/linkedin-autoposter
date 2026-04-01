@@ -7,7 +7,17 @@
       "Bash(gh auth:*)",
       "Bash(/Users/dhamotharanpalanisamy/projects/linkedin-autoposter/.gitignore:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh repo:*)",
+      "Bash(launchctl list:*)",
+      "Bash(1 ls:*)",
+      "Bash(cp /Users/dhamotharanpalanisamy/projects/linkedin-autoposter/schedule/com.linkedin.autoposter.plist ~/Library/LaunchAgents/com.linkedin.autoposter.plist)",
+      "Bash(launchctl load:*)",
+      "Bash(gh secret:*)",
+      "Bash(gh workflow:*)",
+      "Bash(gh run:*)",
+      "Bash(launchctl unload:*)"
     ]
   }
 }

@@ -1,4 +1,4 @@
-# LinkedIn AI Daily Poster
+# LinkedIn Auto - AI Tips and tricks Daily Poster
 
 > Fully automated LinkedIn content engine — AI-generated posts on AI, Claude, GitHub Copilot, and data engineering, delivered daily with zero manual effort after a one-time setup.
 
@@ -8,7 +8,7 @@
 
 ## Table of Contents
 
-- [LinkedIn AI Daily Poster](#linkedin-ai-daily-poster)
+- [LinkedIn Auto - AI Tips and tricks Daily Poster](#linkedin-auto---ai-tips-and-tricks-daily-poster)
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
   - [How It Works](#how-it-works)
