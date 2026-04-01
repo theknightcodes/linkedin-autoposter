@@ -2,8 +2,8 @@ name: Daily LinkedIn Post
 
 on:
   schedule:
-    - cron: '30 0 * * *'   # 08:30 SGT = 00:30 UTC (adjust for your timezone)
-  workflow_dispatch:         # allow manual trigger from GitHub UI
+    - cron: '30 0 * * *'   # 08:30 SGT = 00:30 UTC
+  workflow_dispatch:         # manual trigger from GitHub UI
 
 jobs:
   post:
@@ -18,11 +18,13 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install anthropic requests flask python-dotenv
+        run: pip install anthropic requests flask python-dotenv google-genai
 
       - name: Write .env from secrets
         run: |
           cat > .env << EOF
+          LLM_PROVIDER=${{ secrets.LLM_PROVIDER }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
           LINKEDIN_CLIENT_ID=${{ secrets.LINKEDIN_CLIENT_ID }}
           LINKEDIN_CLIENT_SECRET=${{ secrets.LINKEDIN_CLIENT_SECRET }}
@@ -31,6 +33,7 @@ jobs:
           LINKEDIN_TOKEN_EXPIRES_AT=${{ secrets.LINKEDIN_TOKEN_EXPIRES_AT }}
           LINKEDIN_REFRESH_ISSUED_AT=${{ secrets.LINKEDIN_REFRESH_ISSUED_AT }}
           LINKEDIN_PERSON_URN=${{ secrets.LINKEDIN_PERSON_URN }}
+          DRY_RUN=false
           EOF
 
       - name: Restore post history
