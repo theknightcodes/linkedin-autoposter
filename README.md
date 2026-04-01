@@ -26,12 +26,22 @@
     - [Option C — From the API error message](#option-c--from-the-api-error-message)
   - [Running the Poster](#running-the-poster)
   - [Scheduling Options](#scheduling-options)
-    - [Option A — macOS launchd (recommended)](#option-a--macos-launchd-recommended)
-    - [Option B — Cron](#option-b--cron)
-    - [Option C — GitHub Actions (cloud / no Mac required)](#option-c--github-actions-cloud--no-mac-required)
+    - [Option A — GitHub Actions (recommended — fully autonomous)](#option-a--github-actions-recommended--fully-autonomous)
+    - [Option B — macOS launchd](#option-b--macos-launchd)
+    - [Option C — Cron](#option-c--cron)
+  - [GitHub Actions Pipeline — Deep Dive](#github-actions-pipeline--deep-dive)
+    - [How the Pipeline Works](#how-the-pipeline-works)
+    - [Secrets vs Variables — What's the Difference?](#secrets-vs-variables--whats-the-difference)
+    - [Complete Secrets Reference](#complete-secrets-reference)
+    - [Setting Up Secrets (Step by Step)](#setting-up-secrets-step-by-step)
+    - [Updating a Secret](#updating-a-secret)
+    - [Triggering a Manual Run](#triggering-a-manual-run)
+    - [Viewing Run Logs](#viewing-run-logs)
   - [Customising Your Posts](#customising-your-posts)
   - [Token Lifecycle](#token-lifecycle)
   - [Project Structure](#project-structure)
+  - [Troubleshooting](#troubleshooting)
+  - [Known Gotchas](#known-gotchas)
   - [License](#license)
 
 ---
@@ -230,33 +240,197 @@ tail -f logs/autoposter.log
 
 ## Scheduling Options
 
-### Option A — macOS launchd (recommended)
+### Option A — GitHub Actions (recommended — fully autonomous)
 
-Installed automatically by `install.sh`. Runs at 8:30 AM daily and catches up if your Mac was asleep.
+Runs entirely in the cloud. Your Mac can be off, sleeping, or on the other side of the world — the post goes out at 8:30 AM SGT every day without any intervention.
+
+See the [GitHub Actions Pipeline — Deep Dive](#github-actions-pipeline--deep-dive) section below for full setup instructions.
+
+### Option B — macOS launchd
+
+Installed automatically by `install.sh`. Best if you want local control.
 
 ```bash
+# Install and enable
+cp schedule/com.linkedin.autoposter.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.linkedin.autoposter.plist
+
 # Check status
 launchctl list | grep linkedin
 
-# Unload (disable)
+# Disable
 launchctl unload ~/Library/LaunchAgents/com.linkedin.autoposter.plist
-
-# Reload (re-enable)
-launchctl load ~/Library/LaunchAgents/com.linkedin.autoposter.plist
 ```
 
-### Option B — Cron
+> If your Mac is asleep at 8:30 AM, launchd will catch up and post as soon as it wakes.
+
+### Option C — Cron
 
 ```bash
 crontab -e
 # Paste contents of schedule/crontab.example
 ```
 
-### Option C — GitHub Actions (cloud / no Mac required)
+---
 
-1. Push this repo to a **private** GitHub repository
-2. Add all `.env` values as repository secrets (Settings → Secrets)
-3. The workflow at `.github/workflows/daily_post.yml` runs at 8:30 AM SGT (UTC 00:30) daily
+## GitHub Actions Pipeline — Deep Dive
+
+This is the recommended way to run the poster. Zero dependency on your local machine.
+
+### How the Pipeline Works
+
+```
+GitHub Cron Trigger (00:30 UTC = 08:30 SGT)
+          │
+          ▼
+  Ubuntu runner spins up (fresh cloud VM)
+          │
+          ▼
+  Checkout code from repo
+          │
+          ▼
+  Install Python 3.11 + dependencies
+          │
+          ▼
+  Reconstruct .env from GitHub Secrets  ◄── your credentials injected here
+          │
+          ▼
+  Restore posts.db from Actions Cache   ◄── preserves post history across runs
+          │
+          ▼
+  python -m src.main
+    ├── generate post via Gemini/Claude
+    ├── dedup check against SQLite history
+    └── POST to LinkedIn REST API
+          │
+          ▼
+  Save updated posts.db to Actions Cache
+          │
+          ▼
+  Runner is destroyed (nothing persists except cache)
+```
+
+### Secrets vs Variables — What's the Difference?
+
+| | GitHub Secrets | GitHub Variables |
+|--|---------------|-----------------|
+| **Stored as** | Encrypted, never readable after saving | Plain text, readable anytime |
+| **Use for** | API keys, tokens, passwords | Non-sensitive config like timezone, topic names |
+| **In workflow** | `${{ secrets.MY_SECRET }}` | `${{ vars.MY_VARIABLE }}` |
+| **Visible in logs** | ❌ Masked automatically | ✅ Visible |
+| **This project uses** | All credentials | Not used currently |
+
+> This project uses **Secrets only** — all values are sensitive credentials that should never appear in logs.
+
+### Complete Secrets Reference
+
+These are all the secrets the workflow needs. Set every one of them before running.
+
+| Secret Name | Where to get it | Example value |
+|-------------|-----------------|---------------|
+| `LLM_PROVIDER` | Choose `gemini` (free) or `claude` (paid) | `gemini` |
+| `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | `AIzaSy...` |
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) — only if using Claude | `sk-ant-...` |
+| `LINKEDIN_CLIENT_ID` | LinkedIn Developer App → Auth tab | `86mjgvb...` |
+| `LINKEDIN_CLIENT_SECRET` | LinkedIn Developer App → Auth tab | `WPL_AP1...` |
+| `LINKEDIN_ACCESS_TOKEN` | Generated by `python -m src.oauth_setup` → saved in `.env` | `AQXeX...` |
+| `LINKEDIN_REFRESH_TOKEN` | Same as above | `AQW...` |
+| `LINKEDIN_TOKEN_EXPIRES_AT` | Same as above (Unix timestamp) | `1780184180` |
+| `LINKEDIN_REFRESH_ISSUED_AT` | Same as above (Unix timestamp) | `1775000181` |
+| `LINKEDIN_PERSON_URN` | See [Finding Your LinkedIn Person URN](#finding-your-linkedin-person-urn) | `urn:li:person:edM1EcVerD` |
+
+### Setting Up Secrets (Step by Step)
+
+**Option 1 — GitHub Web UI (easiest for first-timers)**
+
+1. Go to your repo on GitHub
+2. Click **Settings** → **Secrets and variables** → **Actions**
+3. Click **New repository secret**
+4. Enter the name (e.g. `GEMINI_API_KEY`) and paste the value
+5. Click **Add secret**
+6. Repeat for all secrets in the table above
+
+**Option 2 — GitHub CLI (fastest if you have `gh` installed)**
+
+```bash
+# Install GitHub CLI: https://cli.github.com
+gh auth login
+
+# Set all secrets from your local .env in one go
+gh secret set LLM_PROVIDER          --body "gemini"           --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set GEMINI_API_KEY        --body "your_key_here"    --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_CLIENT_ID    --body "your_client_id"   --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_CLIENT_SECRET --body "your_secret"     --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_ACCESS_TOKEN  --body "your_token"      --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_REFRESH_TOKEN --body "your_refresh"    --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_TOKEN_EXPIRES_AT --body "1780184180"   --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_REFRESH_ISSUED_AT --body "1775000181"  --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_PERSON_URN   --body "urn:li:person:XYZ" --repo YOUR_USERNAME/linkedin-autoposter
+```
+
+**Option 3 — Bulk set from your local `.env` (if you've already run `oauth_setup`)**
+
+```bash
+# Run this from your project root after completing local setup
+source .env
+gh secret set LLM_PROVIDER             --body "$LLM_PROVIDER"             --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set GEMINI_API_KEY           --body "$GEMINI_API_KEY"           --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_CLIENT_ID       --body "$LINKEDIN_CLIENT_ID"       --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_CLIENT_SECRET   --body "$LINKEDIN_CLIENT_SECRET"   --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_ACCESS_TOKEN    --body "$LINKEDIN_ACCESS_TOKEN"    --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_REFRESH_TOKEN   --body "$LINKEDIN_REFRESH_TOKEN"   --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_TOKEN_EXPIRES_AT --body "$LINKEDIN_TOKEN_EXPIRES_AT" --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_REFRESH_ISSUED_AT --body "$LINKEDIN_REFRESH_ISSUED_AT" --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_PERSON_URN      --body "$LINKEDIN_PERSON_URN"      --repo YOUR_USERNAME/linkedin-autoposter
+```
+
+**Verify all secrets are set:**
+
+```bash
+gh secret list --repo YOUR_USERNAME/linkedin-autoposter
+```
+
+### Updating a Secret
+
+When your LinkedIn access token refreshes (every ~60 days), update the secret:
+
+```bash
+# After running oauth_setup locally, sync the new token to GitHub
+source .env
+gh secret set LINKEDIN_ACCESS_TOKEN    --body "$LINKEDIN_ACCESS_TOKEN"    --repo YOUR_USERNAME/linkedin-autoposter
+gh secret set LINKEDIN_TOKEN_EXPIRES_AT --body "$LINKEDIN_TOKEN_EXPIRES_AT" --repo YOUR_USERNAME/linkedin-autoposter
+```
+
+> Or update via the GitHub web UI: **Settings → Secrets and variables → Actions → click the secret → Update**.
+
+### Triggering a Manual Run
+
+You don't have to wait for 8:30 AM to test. Trigger a run anytime:
+
+**Via GitHub UI:**
+1. Go to your repo → **Actions** tab
+2. Click **Daily LinkedIn Post** in the left sidebar
+3. Click **Run workflow** → **Run workflow**
+
+**Via GitHub CLI:**
+```bash
+gh workflow run daily_post.yml --repo YOUR_USERNAME/linkedin-autoposter
+```
+
+### Viewing Run Logs
+
+```bash
+# List recent runs
+gh run list --repo YOUR_USERNAME/linkedin-autoposter --limit 5
+
+# Watch a run in real time
+gh run watch --repo YOUR_USERNAME/linkedin-autoposter
+
+# View logs of the last run
+gh run view --repo YOUR_USERNAME/linkedin-autoposter --log | grep -E "INFO|ERROR|Posted"
+```
+
+Or open the Actions tab on GitHub for a visual view of every run, step by step.
 
 ---
 
@@ -320,6 +494,34 @@ linkedin-autoposter/
 └── posts.db                     # SQLite post history (auto-created, git-ignored)
 ```
 
+
+---
+
+## Troubleshooting
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `HTTP 426 NONEXISTENT_VERSION` | `LinkedIn-Version` header is expired | Update `LinkedIn-Version` in `src/linkedin_client.py` to current `YYYYMM` (e.g. `202601`) |
+| `HTTP 403` on POST | Missing `w_member_social` scope | Add **"Share on LinkedIn"** product in LinkedIn Developer Portal, then re-run `oauth_setup.py` |
+| `HTTP 422 DUPLICATE_POST` | Same content posted twice (retry after silent 201) | Already handled — deduplication in `post_tracker.py` prevents future duplicates |
+| `Person URN not found` during OAuth | `w_member_social` alone doesn't expose profile | Add **"Sign In with LinkedIn using OpenID Connect"** product, or set URN manually — see [Finding Your Person URN](#finding-your-linkedin-person-urn) |
+| `conda run` uses wrong Python | Homebrew Python on PATH overrides conda env | Use `/opt/miniconda3/envs/linkedin-autoposter/bin/python` directly |
+| `ModuleNotFoundError: dotenv` | Same as above — wrong Python interpreter | Use full path to conda env Python |
+| GitHub Actions run fails silently | Missing or incorrect secret value | Run `gh secret list` to verify all 9 secrets exist, check logs for which key is missing |
+| Token expired in GitHub Actions | Access token rotated but secret not updated | Re-run `oauth_setup.py` locally, then update `LINKEDIN_ACCESS_TOKEN` and `LINKEDIN_TOKEN_EXPIRES_AT` secrets |
+
+---
+
+## Known Gotchas
+
+See [`tasks/lessons.md`](tasks/lessons.md) for the full debugging journal. Key points:
+
+- **LinkedIn REST API uses alphanumeric Person URNs** — the numeric ID from your profile URL (`urn:li:member:12345`) maps to an alphanumeric form (`urn:li:person:abcXYZ`). Use the alphanumeric form in `.env` and GitHub Secrets.
+- **LinkedIn 201 response has an empty body** — the post URN is in the `x-restli-id` response header, not the body. Don't try to parse it as JSON.
+- **`LinkedIn-Version` header has a shelf life** — bump it to the current `YYYYMM` when you see a 426 error.
+- **Both LinkedIn products are required** — "Share on LinkedIn" for posting + "Sign In with OpenID Connect" for auto-detecting your Person URN during setup.
+- **GitHub Secrets are write-only** — once saved you cannot read the value back. Keep a local copy in your `.env` file.
+- **posts.db is cached between GitHub Actions runs** — this preserves your post history and deduplication across days. If the cache is ever lost, the bot will continue posting but may occasionally regenerate similar content.
 
 ---
 
