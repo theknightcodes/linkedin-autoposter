@@ -7,14 +7,10 @@ on:
         description: 'LinkedIn post URN to comment on (e.g. urn:li:share:xxx)'
         required: true
         default: 'urn:li:share:7444893074100502528'
-      test_topic:
-        description: 'Topic for comment generation'
-        required: false
-        default: 'ai_tips'
 
 jobs:
 
-  # ── Job 1: Generate comment and show for review ───────────────────
+  # ── Job 1: Fetch post + generate comment + show full preview ──────
   generate:
     name: Generate Comment Draft
     runs-on: ubuntu-latest
@@ -45,52 +41,126 @@ jobs:
           LINKEDIN_PERSON_URN=${{ secrets.LINKEDIN_PERSON_URN }}
           EOF
 
-      - name: Generate comment
+      - name: Fetch original post + generate comment
         run: |
           python - << 'EOF'
-          import os
+          import os, requests, json
           from dotenv import load_dotenv
           from pathlib import Path
 
           load_dotenv(".env")
 
-          from src.content_generator import generate_comment
+          post_urn   = os.environ["POST_URN"]
+          person_urn = os.environ.get("LINKEDIN_PERSON_URN", "")
+          token      = os.environ.get("LINKEDIN_ACCESS_TOKEN", "")
 
-          # Use a realistic post sample for generation context
-          sample_post = (
-              "Most teams debug LLM failures the wrong way.\n\n"
-              "They look at the output. They should look at the input.\n\n"
-              "When a model gives a bad answer, the root cause is almost always "
-              "in how the prompt was constructed — not the model itself.\n\n"
-              "Start debugging from the top of your prompt, not the bottom of your logs.\n\n"
-              "What's your go-to method for debugging LLM outputs?\n\n"
-              "#AITips #LLM #DataEngineering"
+          headers = {
+              "Authorization":    f"Bearer {token}",
+              "LinkedIn-Version": "202601",
+              "X-Restli-Protocol-Version": "2.0.0",
+          }
+
+          # ── Fetch original post content from LinkedIn ──────────────
+          encoded_urn = requests.utils.quote(post_urn, safe="")
+          resp = requests.get(
+              f"https://api.linkedin.com/rest/posts/{encoded_urn}",
+              headers=headers,
+              timeout=15,
           )
 
-          comment = generate_comment(sample_post)
-          print(f"Generated comment:\n{comment}")
+          post_text = "(could not fetch post content)"
+          if resp.status_code == 200:
+              data = resp.json()
+              post_text = data.get("commentary", "(no commentary found)")
+          else:
+              print(f"Warning: could not fetch post [{resp.status_code}]: {resp.text}")
 
-          post_urn   = os.environ.get("POST_URN", "")
-          person_urn = os.environ.get("LINKEDIN_PERSON_URN", "")
+          # ── Fetch account name from LinkedIn ──────────────────────
+          profile_resp = requests.get(
+              "https://api.linkedin.com/v2/userinfo",
+              headers={"Authorization": f"Bearer {token}"},
+              timeout=10,
+          )
+          account_name = "Unknown"
+          if profile_resp.status_code == 200:
+              profile = profile_resp.json()
+              first = profile.get("given_name", "")
+              last  = profile.get("family_name", "")
+              account_name = f"{first} {last}".strip() or person_urn
 
+          print(f"Account: {account_name}")
+          print(f"Post text:\n{post_text}")
+
+          # ── Generate comment ───────────────────────────────────────
+          from src.content_generator import generate_comment
+          comment = generate_comment(post_text)
+          print(f"\nGenerated comment:\n{comment}")
+
+          # ── Save draft with full context ───────────────────────────
           Path("comment_draft.txt").write_text(
-              f"POST_URN={post_urn}\nPERSON_URN={person_urn}\n---\n{comment}\n"
+              f"POST_URN={post_urn}\n"
+              f"PERSON_URN={person_urn}\n"
+              f"ACCOUNT_NAME={account_name}\n"
+              f"---POST---\n{post_text}\n"
+              f"---COMMENT---\n{comment}\n"
           )
           EOF
         env:
           POST_URN: ${{ inputs.post_urn }}
 
-      - name: Write comment to job summary
+      - name: Write full preview to job summary
         run: |
-          echo "## Proposed Comment" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Target post URN:** \`${{ inputs.post_urn }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -n +4 comment_draft.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> Approve the next job to post this comment, or Reject to skip." >> $GITHUB_STEP_SUMMARY
+          python - << 'EOF'
+          from pathlib import Path
+
+          content = Path("comment_draft.txt").read_text()
+
+          def extract(content, start_marker, end_marker=None):
+              start = content.find(start_marker)
+              if start == -1:
+                  return ""
+              start += len(start_marker)
+              if end_marker:
+                  end = content.find(end_marker, start)
+                  return content[start:end].strip() if end != -1 else content[start:].strip()
+              return content[start:].strip()
+
+          lines        = content.splitlines()
+          post_urn     = next((l.split("=",1)[1] for l in lines if l.startswith("POST_URN=")), "")
+          person_urn   = next((l.split("=",1)[1] for l in lines if l.startswith("PERSON_URN=")), "")
+          account_name = next((l.split("=",1)[1] for l in lines if l.startswith("ACCOUNT_NAME=")), "")
+          post_text    = extract(content, "---POST---\n", "---COMMENT---")
+          comment_text = extract(content, "---COMMENT---\n")
+
+          summary = f"""# Comment Review
+
+          ## Posting Account
+          | Field | Value |
+          |-------|-------|
+          | Name | **{account_name}** |
+          | URN | `{person_urn}` |
+
+          ---
+
+          ## Original Post
+          > {chr(10).join('> ' + line for line in post_text.splitlines())}
+
+          ---
+
+          ## Proposed Comment
+          > {chr(10).join('> ' + line for line in comment_text.splitlines())}
+
+          ---
+
+          **Approve** the next job to post this comment, or **Reject** to skip.
+          """
+
+          # Dedent
+          summary = "\n".join(line.lstrip() for line in summary.splitlines())
+          Path("summary.md").write_text(summary)
+          print(summary)
+          EOF
+          cat summary.md >> $GITHUB_STEP_SUMMARY
 
       - name: Upload comment draft
         uses: actions/upload-artifact@v4
@@ -104,7 +174,7 @@ jobs:
     name: Post Comment (pending your approval)
     needs: generate
     runs-on: ubuntu-latest
-    environment: comment-approval   # ← pauses and emails you
+    environment: comment-approval
 
     steps:
       - uses: actions/checkout@v4
@@ -143,13 +213,16 @@ jobs:
 
           load_dotenv(".env")
 
-          lines       = Path("comment_draft.txt").read_text().splitlines()
-          post_urn    = lines[0].split("=", 1)[1]
-          person_urn  = lines[1].split("=", 1)[1]
-          comment_txt = "\n".join(lines[3:]).strip()
+          content    = Path("comment_draft.txt").read_text()
+          lines      = content.splitlines()
+          post_urn   = next((l.split("=",1)[1] for l in lines if l.startswith("POST_URN=")), "")
+          person_urn = next((l.split("=",1)[1] for l in lines if l.startswith("PERSON_URN=")), "")
+
+          start = content.find("---COMMENT---\n")
+          comment_txt = content[start + len("---COMMENT---\n"):].strip()
 
           print(f"Posting comment to: {post_urn}")
-          print(f"Comment text: {comment_txt}")
+          print(f"Comment: {comment_txt}")
           create_comment(post_urn, comment_txt, person_urn)
           print("Done.")
           EOF
