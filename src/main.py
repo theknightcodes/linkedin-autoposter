@@ -13,8 +13,6 @@ import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-
 # ── Logging setup ─────────────────────────────────────────────────
 LOG_DIR = Path(__file__).parent.parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -46,8 +44,8 @@ def run(dry_run: bool = False) -> None:
         record_post,
         update_post_status,
     )
-    from src.content_generator import generate_post, generate_comment
-    from src.linkedin_client import create_post, create_comment
+    from src.content_generator import generate_post
+    from src.linkedin_client import create_post
     from src.token_manager import get_valid_token
 
     dry_run = dry_run or config.DRY_RUN
@@ -108,19 +106,6 @@ def run(dry_run: bool = False) -> None:
         urn = create_post(post_text, person_urn)
         update_post_status(row_id, "posted", linkedin_urn=urn)
         logger.info("✅ Posted successfully. LinkedIn URN: %s", urn)
-
-        # Generate comment and save for review — posted separately after approval
-        comment_text = generate_comment(post_text)
-        if comment_text:
-            comment_file = ROOT / "comment_draft.txt"
-            comment_file.write_text(
-                f"POST_URN={urn}\n"
-                f"PERSON_URN={person_urn}\n"
-                f"---POST---\n{post_text}\n"
-                f"---COMMENT---\n{comment_text}\n"
-            )
-            logger.info("Comment draft saved to %s", comment_file)
-            logger.info("Proposed comment:\n%s", comment_text)
 
     except Exception as exc:
         update_post_status(row_id, "failed", error=str(exc))
