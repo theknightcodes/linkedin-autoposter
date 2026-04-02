@@ -9,6 +9,7 @@ from src.token_manager import get_valid_token
 logger = logging.getLogger(__name__)
 
 POST_URL     = "https://api.linkedin.com/rest/posts"
+COMMENT_URL  = "https://api.linkedin.com/rest/socialActions/{urn}/comments"
 HEADERS_BASE = {
     "Content-Type":      "application/json",
     "LinkedIn-Version":  "202601",
@@ -88,3 +89,32 @@ def create_post(text: str, person_urn: str) -> str:
     raise RuntimeError(
         f"LinkedIn post failed after {MAX_RETRIES} attempts. Last error: {last_error}"
     )
+
+
+def create_comment(post_urn: str, text: str, person_urn: str) -> None:
+    """
+    Post a comment on a LinkedIn post identified by post_urn.
+    Fails silently — a missing comment is not worth aborting the run.
+    """
+    import os
+    person_urn = person_urn or os.environ.get("LINKEDIN_PERSON_URN", "")
+    if not text or not post_urn or post_urn == "unknown":
+        logger.warning("Skipping auto-comment — missing post URN or comment text.")
+        return
+
+    url     = COMMENT_URL.format(urn=requests.utils.quote(post_urn, safe=""))
+    payload = {
+        "actor":   person_urn,
+        "message": {"text": text},
+    }
+
+    try:
+        token   = get_valid_token()
+        headers = {**HEADERS_BASE, "Authorization": f"Bearer {token}"}
+        resp    = requests.post(url, json=payload, headers=headers, timeout=20)
+        if resp.status_code in (200, 201):
+            logger.info("Auto-comment posted successfully.")
+        else:
+            logger.warning("Auto-comment failed [%d]: %s", resp.status_code, resp.text)
+    except Exception as exc:
+        logger.warning("Auto-comment exception: %s", exc)

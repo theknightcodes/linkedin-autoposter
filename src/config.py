@@ -27,9 +27,10 @@ LINKEDIN_PERSON_URN     = os.getenv("LINKEDIN_PERSON_URN", "")
 LINKEDIN_REDIRECT_URI   = os.getenv("LINKEDIN_REDIRECT_URI", "http://localhost:8080/callback")
 
 # ── Content ───────────────────────────────────────────────────────
-MAX_POST_LENGTH = 1300          # LinkedIn sweet spot (triggers "see more" but not too long)
-MIN_POST_LENGTH = 400
-DRY_RUN         = os.getenv("DRY_RUN", "false").lower() == "true"
+MAX_POST_LENGTH        = 900    # Short posts get more reach — ~150 words
+MIN_POST_LENGTH        = 150
+COMMENT_DELAY_SECONDS  = 300    # Wait 5 min after posting before auto-comment
+DRY_RUN                = os.getenv("DRY_RUN", "false").lower() == "true"
 
 # ── Paths ─────────────────────────────────────────────────────────
 DB_PATH      = ROOT / "posts.db"

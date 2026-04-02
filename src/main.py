@@ -44,8 +44,8 @@ def run(dry_run: bool = False) -> None:
         record_post,
         update_post_status,
     )
-    from src.content_generator import generate_post
-    from src.linkedin_client import create_post
+    from src.content_generator import generate_post, generate_comment
+    from src.linkedin_client import create_post, create_comment
     from src.token_manager import get_valid_token
 
     dry_run = dry_run or config.DRY_RUN
@@ -106,6 +106,14 @@ def run(dry_run: bool = False) -> None:
         urn = create_post(post_text, person_urn)
         update_post_status(row_id, "posted", linkedin_urn=urn)
         logger.info("✅ Posted successfully. LinkedIn URN: %s", urn)
+
+        # Auto-comment: wait then post a follow-up comment to seed engagement
+        comment_text = generate_comment(post_text)
+        if comment_text:
+            logger.info("Waiting %ds before posting auto-comment…", config.COMMENT_DELAY_SECONDS)
+            import time
+            time.sleep(config.COMMENT_DELAY_SECONDS)
+            create_comment(urn, comment_text, person_urn)
 
     except Exception as exc:
         update_post_status(row_id, "failed", error=str(exc))

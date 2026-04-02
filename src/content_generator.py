@@ -17,6 +17,15 @@ from src.config import (
     TOPIC_DISPLAY,
 )
 
+COMMENT_SYSTEM_PROMPT = (
+    "You are a Principal Data & AI Architect. You just published a LinkedIn post "
+    "and are writing the first comment on it — within minutes of posting — to seed engagement. "
+    "Your comment should add ONE extra insight, a personal example, or a sharper version of the closing question. "
+    "Keep it to 1–3 sentences. Be natural, not salesy. Do NOT repeat the post. "
+    "End with a direct question if the post didn't already ask one clearly enough. "
+    "No hashtags. No emojis."
+)
+
 logger = logging.getLogger(__name__)
 
 PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
@@ -128,6 +137,48 @@ def generate_post(topic: str, recent_posts: list[str]) -> str:
 
     _validate(text, topic)
     return text
+
+
+def generate_comment(post_text: str) -> str:
+    """Generate a short follow-up comment to post on the published LinkedIn post."""
+    user_prompt = (
+        f"Here is the LinkedIn post I just published:\n\n{post_text}\n\n"
+        "Write a short follow-up comment (1–3 sentences) to post as the first comment. "
+        "Add a new angle, a concrete personal example, or sharpen the question. No hashtags."
+    )
+    try:
+        if PROVIDER == "gemini":
+            from google import genai
+            from google.genai import types
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            client  = genai.Client(api_key=api_key)
+            model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+            response = client.models.generate_content(
+                model=model_name,
+                config=types.GenerateContentConfig(
+                    system_instruction=COMMENT_SYSTEM_PROMPT,
+                    max_output_tokens=200,
+                    temperature=0.8,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+                contents=user_prompt,
+            )
+            return response.text.strip()
+        else:
+            import anthropic
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            model   = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
+            client  = anthropic.Anthropic(api_key=api_key)
+            msg = client.messages.create(
+                model=model,
+                max_tokens=200,
+                system=COMMENT_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            return msg.content[0].text.strip()
+    except Exception as exc:
+        logger.warning("Comment generation failed: %s", exc)
+        return ""
 
 
 def _validate(text: str, topic: str) -> None:
