@@ -7,10 +7,13 @@ on:
         description: 'LinkedIn post URN to comment on (e.g. urn:li:share:xxx)'
         required: true
         default: 'urn:li:share:7444893074100502528'
+      post_text:
+        description: 'Paste the original post content here (so the AI can write a relevant comment)'
+        required: true
 
 jobs:
 
-  # ── Job 1: Fetch post + generate comment + show full preview ──────
+  # ── Job 1: Generate comment + show full preview ───────────────────
   generate:
     name: Generate Comment Draft
     runs-on: ubuntu-latest
@@ -41,72 +44,33 @@ jobs:
           LINKEDIN_PERSON_URN=${{ secrets.LINKEDIN_PERSON_URN }}
           EOF
 
-      - name: Fetch original post + generate comment
+      - name: Generate comment
         run: |
           python - << 'EOF'
-          import os, requests, json
+          import os
           from dotenv import load_dotenv
           from pathlib import Path
 
           load_dotenv(".env")
 
           post_urn   = os.environ["POST_URN"]
+          post_text  = os.environ["POST_TEXT"]
           person_urn = os.environ.get("LINKEDIN_PERSON_URN", "")
-          token      = os.environ.get("LINKEDIN_ACCESS_TOKEN", "")
 
-          headers = {
-              "Authorization":    f"Bearer {token}",
-              "LinkedIn-Version": "202601",
-              "X-Restli-Protocol-Version": "2.0.0",
-          }
-
-          # ── Fetch original post content from LinkedIn ──────────────
-          encoded_urn = requests.utils.quote(post_urn, safe="")
-          resp = requests.get(
-              f"https://api.linkedin.com/rest/posts/{encoded_urn}",
-              headers=headers,
-              timeout=15,
-          )
-
-          post_text = "(could not fetch post content)"
-          if resp.status_code == 200:
-              data = resp.json()
-              post_text = data.get("commentary", "(no commentary found)")
-          else:
-              print(f"Warning: could not fetch post [{resp.status_code}]: {resp.text}")
-
-          # ── Fetch account name from LinkedIn ──────────────────────
-          profile_resp = requests.get(
-              "https://api.linkedin.com/v2/userinfo",
-              headers={"Authorization": f"Bearer {token}"},
-              timeout=10,
-          )
-          account_name = "Unknown"
-          if profile_resp.status_code == 200:
-              profile = profile_resp.json()
-              first = profile.get("given_name", "")
-              last  = profile.get("family_name", "")
-              account_name = f"{first} {last}".strip() or person_urn
-
-          print(f"Account: {account_name}")
-          print(f"Post text:\n{post_text}")
-
-          # ── Generate comment ───────────────────────────────────────
           from src.content_generator import generate_comment
           comment = generate_comment(post_text)
-          print(f"\nGenerated comment:\n{comment}")
+          print(f"Generated comment:\n{comment}")
 
-          # ── Save draft with full context ───────────────────────────
           Path("comment_draft.txt").write_text(
               f"POST_URN={post_urn}\n"
               f"PERSON_URN={person_urn}\n"
-              f"ACCOUNT_NAME={account_name}\n"
               f"---POST---\n{post_text}\n"
               f"---COMMENT---\n{comment}\n"
           )
           EOF
         env:
           POST_URN: ${{ inputs.post_urn }}
+          POST_TEXT: ${{ inputs.post_text }}
 
       - name: Write full preview to job summary
         run: |
@@ -114,49 +78,41 @@ jobs:
           from pathlib import Path
 
           content = Path("comment_draft.txt").read_text()
+          lines   = content.splitlines()
 
-          def extract(content, start_marker, end_marker=None):
-              start = content.find(start_marker)
-              if start == -1:
-                  return ""
-              start += len(start_marker)
-              if end_marker:
-                  end = content.find(end_marker, start)
-                  return content[start:end].strip() if end != -1 else content[start:].strip()
-              return content[start:].strip()
+          post_urn   = next((l.split("=",1)[1] for l in lines if l.startswith("POST_URN=")), "")
+          person_urn = next((l.split("=",1)[1] for l in lines if l.startswith("PERSON_URN=")), "")
 
-          lines        = content.splitlines()
-          post_urn     = next((l.split("=",1)[1] for l in lines if l.startswith("POST_URN=")), "")
-          person_urn   = next((l.split("=",1)[1] for l in lines if l.startswith("PERSON_URN=")), "")
-          account_name = next((l.split("=",1)[1] for l in lines if l.startswith("ACCOUNT_NAME=")), "")
-          post_text    = extract(content, "---POST---\n", "---COMMENT---")
-          comment_text = extract(content, "---COMMENT---\n")
+          post_start    = content.find("---POST---\n") + len("---POST---\n")
+          comment_start = content.find("---COMMENT---\n")
+          post_text     = content[post_start:comment_start].strip()
+          comment_text  = content[comment_start + len("---COMMENT---\n"):].strip()
 
           summary = f"""# Comment Review
 
-          ## Posting Account
-          | Field | Value |
-          |-------|-------|
-          | Name | **{account_name}** |
-          | URN | `{person_urn}` |
+## Posting Account
+| Field | Value |
+|-------|-------|
+| LinkedIn URN | `{person_urn}` |
+| Post URN | `{post_urn}` |
 
-          ---
+---
 
-          ## Original Post
-          > {chr(10).join('> ' + line for line in post_text.splitlines())}
+## Original Post *(this is what was published)*
 
-          ---
+{post_text}
 
-          ## Proposed Comment
-          > {chr(10).join('> ' + line for line in comment_text.splitlines())}
+---
 
-          ---
+## Proposed Comment *(this will be posted as your comment)*
 
-          **Approve** the next job to post this comment, or **Reject** to skip.
-          """
+> {comment_text}
 
-          # Dedent
-          summary = "\n".join(line.lstrip() for line in summary.splitlines())
+---
+
+✅ **Approve** the next job to post this comment to LinkedIn.
+❌ **Reject** to skip — nothing will be posted.
+"""
           Path("summary.md").write_text(summary)
           print(summary)
           EOF
@@ -218,11 +174,12 @@ jobs:
           post_urn   = next((l.split("=",1)[1] for l in lines if l.startswith("POST_URN=")), "")
           person_urn = next((l.split("=",1)[1] for l in lines if l.startswith("PERSON_URN=")), "")
 
-          start = content.find("---COMMENT---\n")
+          start       = content.find("---COMMENT---\n")
           comment_txt = content[start + len("---COMMENT---\n"):].strip()
 
-          print(f"Posting comment to: {post_urn}")
-          print(f"Comment: {comment_txt}")
+          print(f"Posting comment to : {post_urn}")
+          print(f"As account         : {person_urn}")
+          print(f"Comment            : {comment_txt}")
           create_comment(post_urn, comment_txt, person_urn)
           print("Done.")
           EOF

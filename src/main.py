@@ -113,7 +113,12 @@ def run(dry_run: bool = False) -> None:
         comment_text = generate_comment(post_text)
         if comment_text:
             comment_file = ROOT / "comment_draft.txt"
-            comment_file.write_text(f"POST_URN={urn}\nPERSON_URN={person_urn}\n---\n{comment_text}\n")
+            comment_file.write_text(
+                f"POST_URN={urn}\n"
+                f"PERSON_URN={person_urn}\n"
+                f"---POST---\n{post_text}\n"
+                f"---COMMENT---\n{comment_text}\n"
+            )
             logger.info("Comment draft saved to %s", comment_file)
             logger.info("Proposed comment:\n%s", comment_text)
 
