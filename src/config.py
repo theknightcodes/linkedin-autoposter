@@ -54,6 +54,10 @@ TOPIC_DISPLAY = {
     "lessons_learned":      "Lessons Learned in AI",
 }
 
+# ── Image Generation (v2) ─────────────────────────────────────────
+ENABLE_IMAGES   = os.getenv("ENABLE_IMAGES", "true").lower() == "true"
+IMAGE_OUTPUT_DIR = ROOT / os.getenv("IMAGE_OUTPUT_DIR", "images")
+
 # ── Scheduling ────────────────────────────────────────────────────
 POST_HOUR   = int(os.getenv("POST_HOUR", "8"))
 POST_MINUTE = int(os.getenv("POST_MINUTE", "30"))

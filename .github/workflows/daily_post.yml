@@ -19,8 +19,17 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python dependencies
         run: pip install anthropic requests flask python-dotenv google-genai
+
+      - name: Install Remotion dependencies
+        run: npm ci
+        working-directory: remotion
 
       - name: Write .env from secrets
         run: |
@@ -36,6 +45,7 @@ jobs:
           LINKEDIN_REFRESH_ISSUED_AT=${{ secrets.LINKEDIN_REFRESH_ISSUED_AT }}
           LINKEDIN_PERSON_URN=${{ secrets.LINKEDIN_PERSON_URN }}
           DRY_RUN=false
+          ENABLE_IMAGES=true
           EOF
 
       - name: Restore post history

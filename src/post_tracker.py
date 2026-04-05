@@ -15,7 +15,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Create the posts table if it doesn't exist."""
+    """Create the posts table if it doesn't exist, and migrate existing tables."""
     with _connect() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS posts (
@@ -24,6 +24,7 @@ def init_db() -> None:
                 content_hash  TEXT    NOT NULL,
                 content_text  TEXT    NOT NULL,
                 linkedin_urn  TEXT,
+                image_urn     TEXT,
                 status        TEXT    NOT NULL DEFAULT 'pending',
                 created_at    TEXT    NOT NULL,
                 posted_at     TEXT,
@@ -32,6 +33,15 @@ def init_db() -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_hash ON posts(content_hash)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON posts(status)")
+
+        # Migration: add image_urn column to existing databases
+        existing_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(posts)").fetchall()
+        }
+        if "image_urn" not in existing_cols:
+            conn.execute("ALTER TABLE posts ADD COLUMN image_urn TEXT")
+
         conn.commit()
 
 
@@ -96,6 +106,7 @@ def record_post(
     text: str,
     status: str,
     linkedin_urn: Optional[str] = None,
+    image_urn: Optional[str] = None,
     error: Optional[str] = None,
 ) -> int:
     """Insert a post record. Returns the new row id."""
@@ -104,14 +115,15 @@ def record_post(
         cur = conn.execute(
             """
             INSERT INTO posts (topic, content_hash, content_text, linkedin_urn,
-                               status, created_at, posted_at, error_message)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                               image_urn, status, created_at, posted_at, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 topic,
                 _hash(text),
                 text,
                 linkedin_urn,
+                image_urn,
                 status,
                 now,
                 now if status == "posted" else None,
@@ -126,6 +138,7 @@ def update_post_status(
     row_id: int,
     status: str,
     linkedin_urn: Optional[str] = None,
+    image_urn: Optional[str] = None,
     error: Optional[str] = None,
 ) -> None:
     now = datetime.utcnow().isoformat()
@@ -133,10 +146,10 @@ def update_post_status(
         conn.execute(
             """
             UPDATE posts
-            SET status = ?, linkedin_urn = ?, posted_at = ?, error_message = ?
+            SET status = ?, linkedin_urn = ?, image_urn = ?, posted_at = ?, error_message = ?
             WHERE id = ?
             """,
-            (status, linkedin_urn, now if status == "posted" else None, error, row_id),
+            (status, linkedin_urn, image_urn, now if status == "posted" else None, error, row_id),
         )
         conn.commit()
 

@@ -1,6 +1,8 @@
-"""LinkedIn API v2 client for creating UGC posts."""
+"""LinkedIn API v2 client for creating UGC posts with optional image attachments."""
 import logging
 import time
+from pathlib import Path
+from typing import Optional
 
 import requests
 
@@ -8,8 +10,9 @@ from src.token_manager import get_valid_token
 
 logger = logging.getLogger(__name__)
 
-POST_URL     = "https://api.linkedin.com/rest/posts"
-HEADERS_BASE = {
+POST_URL       = "https://api.linkedin.com/rest/posts"
+IMAGES_URL     = "https://api.linkedin.com/rest/images"
+HEADERS_BASE   = {
     "Content-Type":      "application/json",
     "LinkedIn-Version":  "202601",
 }
@@ -18,9 +21,69 @@ MAX_RETRIES     = 3
 RETRY_BACKOFF   = [2, 5, 10]   # seconds between retries
 
 
-def create_post(text: str, person_urn: str) -> str:
+def upload_image(image_path: Path, person_urn: str) -> str:
+    """
+    Upload a local image to LinkedIn and return the image URN.
+
+    Uses the LinkedIn Images API:
+      1. POST /rest/images?action=initializeUpload  → get uploadUrl + image URN
+      2. PUT <uploadUrl> with binary image data
+      3. Return the image URN for use in create_post_with_image()
+
+    Raises RuntimeError on failure.
+    """
+    token = get_valid_token()
+    headers = {**HEADERS_BASE, "Authorization": f"Bearer {token}"}
+
+    # Step 1: Initialize upload
+    init_payload = {
+        "initializeUploadRequest": {
+            "owner": person_urn,
+        }
+    }
+    init_resp = requests.post(
+        f"{IMAGES_URL}?action=initializeUpload",
+        json=init_payload,
+        headers=headers,
+        timeout=20,
+    )
+    if init_resp.status_code != 200:
+        raise RuntimeError(
+            f"Image upload init failed [{init_resp.status_code}]: {init_resp.text}"
+        )
+
+    upload_data = init_resp.json().get("value", {})
+    upload_url  = upload_data.get("uploadUrl")
+    image_urn   = upload_data.get("image")
+
+    if not upload_url or not image_urn:
+        raise RuntimeError(f"Unexpected initializeUpload response: {init_resp.text}")
+
+    logger.debug("Image upload URL obtained. URN: %s", image_urn)
+
+    # Step 2: Upload binary
+    with open(image_path, "rb") as f:
+        image_bytes = f.read()
+
+    put_resp = requests.put(
+        upload_url,
+        data=image_bytes,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "image/png"},
+        timeout=60,
+    )
+    if put_resp.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Image binary upload failed [{put_resp.status_code}]: {put_resp.text}"
+        )
+
+    logger.info("Image uploaded. URN: %s", image_urn)
+    return image_urn
+
+
+def create_post(text: str, person_urn: str, image_urn: Optional[str] = None) -> str:
     """
     Post `text` to LinkedIn as the user identified by `person_urn`.
+    If `image_urn` is provided, attaches the image to the post.
     Returns the LinkedIn post URN on success.
     Raises RuntimeError on persistent failure.
     """
@@ -43,6 +106,14 @@ def create_post(text: str, person_urn: str) -> str:
         "lifecycleState":             "PUBLISHED",
         "isReshareDisabledByAuthor":  False,
     }
+
+    if image_urn:
+        payload["content"] = {
+            "media": {
+                "id": image_urn,
+            }
+        }
+        logger.debug("Post will include image URN: %s", image_urn)
 
     last_error: Exception | None = None
 

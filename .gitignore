@@ -16,3 +16,6 @@ build/
 
 # macOS
 .DS_Store
+
+# Node / Remotion
+remotion/node_modules/

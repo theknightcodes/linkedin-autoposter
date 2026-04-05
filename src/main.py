@@ -1,9 +1,10 @@
 """
-Orchestrator entry point.
+Orchestrator entry point — v2 (with Remotion image cards).
 
 Usage:
-    python -m src.main              # generate + post to LinkedIn
+    python -m src.main              # generate + image + post to LinkedIn
     python -m src.main --dry-run    # generate + print, do NOT post
+    python -m src.main --no-image   # skip image generation, post text-only
     python -m src.main --stats      # print posting statistics
 """
 import argparse
@@ -34,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
-def run(dry_run: bool = False) -> None:
+def run(dry_run: bool = False, no_image: bool = False) -> None:
     from src import config
     from src.post_tracker import (
         init_db,
@@ -45,12 +46,16 @@ def run(dry_run: bool = False) -> None:
         update_post_status,
     )
     from src.content_generator import generate_post
-    from src.linkedin_client import create_post
+    from src.linkedin_client import create_post, upload_image
     from src.token_manager import get_valid_token
 
     dry_run = dry_run or config.DRY_RUN
+    images_enabled = config.ENABLE_IMAGES and not no_image
+
     if dry_run:
         logger.info("DRY RUN mode — will not post to LinkedIn")
+    if not images_enabled:
+        logger.info("Image generation disabled")
 
     # 1. Initialise DB
     init_db()
@@ -88,24 +93,51 @@ def run(dry_run: bool = False) -> None:
 
     logger.info("Generated post (%d chars):\n%s", len(post_text), post_text)
 
-    # 5. Dry-run exit
+    # 5. Generate image card (v2)
+    image_path = None
+    if images_enabled:
+        try:
+            from src.image_generator import extract_image_props, generate_image
+            logger.info("Extracting image props from post…")
+            image_props = extract_image_props(post_text, topic)
+            logger.info("Rendering image card (headline: %s)…", image_props.get("headline", ""))
+            image_path = generate_image(image_props)
+        except Exception as exc:
+            logger.warning("Image generation failed — continuing with text-only post. Error: %s", exc)
+            image_path = None
+
+    # 6. Dry-run exit
     if dry_run:
         print("\n" + "─" * 60)
         print(f"TOPIC: {topic}")
         print("─" * 60)
         print(post_text)
+        if image_path:
+            print(f"\n🖼  Image card: {image_path}")
         print("─" * 60 + "\n")
         print("✅ Dry run complete. Not posted.")
         return
 
-    # 6. Post to LinkedIn
+    # 7. Post to LinkedIn (with optional image)
     person_urn = os.environ.get("LINKEDIN_PERSON_URN", "")
     row_id = record_post(topic, post_text, "pending")
 
     try:
-        urn = create_post(post_text, person_urn)
-        update_post_status(row_id, "posted", linkedin_urn=urn)
-        logger.info("✅ Posted successfully. LinkedIn URN: %s", urn)
+        image_urn: str | None = None
+
+        if image_path:
+            try:
+                logger.info("Uploading image to LinkedIn…")
+                image_urn = upload_image(image_path, person_urn)
+                logger.info("Image uploaded. URN: %s", image_urn)
+            except Exception as exc:
+                logger.warning("Image upload failed — posting text-only. Error: %s", exc)
+                image_urn = None
+
+        urn = create_post(post_text, person_urn, image_urn=image_urn)
+        update_post_status(row_id, "posted", linkedin_urn=urn, image_urn=image_urn)
+        logger.info("✅ Posted successfully. LinkedIn URN: %s%s", urn,
+                    f" | Image URN: {image_urn}" if image_urn else " (text-only)")
 
     except Exception as exc:
         update_post_status(row_id, "failed", error=str(exc))
@@ -137,16 +169,17 @@ def show_stats() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="LinkedIn AI daily poster")
-    parser.add_argument("--dry-run", action="store_true", help="Generate but do not post")
-    parser.add_argument("--stats",   action="store_true", help="Print statistics and exit")
+    parser = argparse.ArgumentParser(description="LinkedIn AI daily poster — v2 with image cards")
+    parser.add_argument("--dry-run",  action="store_true", help="Generate but do not post")
+    parser.add_argument("--no-image", action="store_true", help="Skip image generation, post text-only")
+    parser.add_argument("--stats",    action="store_true", help="Print statistics and exit")
     args = parser.parse_args()
 
     if args.stats:
         show_stats()
         return
 
-    run(dry_run=args.dry_run)
+    run(dry_run=args.dry_run, no_image=args.no_image)
 
 
 if __name__ == "__main__":
