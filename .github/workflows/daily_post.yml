@@ -25,7 +25,7 @@ jobs:
           node-version: '20'
 
       - name: Install Python dependencies
-        run: pip install anthropic requests flask python-dotenv google-genai
+        run: pip install anthropic requests flask python-dotenv google-genai "openai>=1.30.0" "Pillow>=10.4.0"
 
       - name: Install Remotion dependencies
         run: npm ci
@@ -35,6 +35,8 @@ jobs:
         run: |
           cat > .env << EOF
           LLM_PROVIDER=${{ secrets.LLM_PROVIDER }}
+          OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_MODEL=${{ secrets.OPENROUTER_MODEL }}
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
           LINKEDIN_CLIENT_ID=${{ secrets.LINKEDIN_CLIENT_ID }}
@@ -46,6 +48,7 @@ jobs:
           LINKEDIN_PERSON_URN=${{ secrets.LINKEDIN_PERSON_URN }}
           DRY_RUN=false
           ENABLE_IMAGES=true
+          ENABLE_AI_IMAGES=false
           EOF
 
       - name: Restore post history
