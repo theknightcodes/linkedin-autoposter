@@ -1,11 +1,15 @@
 """
-Orchestrator entry point — v2 (with Remotion image cards).
+Orchestrator entry point — v3 (AI images + OpenRouter).
 
 Usage:
     python -m src.main              # generate + image + post to LinkedIn
     python -m src.main --dry-run    # generate + print, do NOT post
     python -m src.main --no-image   # skip image generation, post text-only
     python -m src.main --stats      # print posting statistics
+
+Image mode is controlled by ENABLE_AI_IMAGES env var:
+    ENABLE_AI_IMAGES=true  — generate contextual AI image (OpenRouter → HF FLUX → Remotion)
+    ENABLE_AI_IMAGES=false — render branded Remotion card (default)
 """
 import argparse
 import logging
@@ -93,15 +97,19 @@ def run(dry_run: bool = False, no_image: bool = False) -> None:
 
     logger.info("Generated post (%d chars):\n%s", len(post_text), post_text)
 
-    # 5. Generate image card (v2)
+    # 5. Generate image card (v3 — AI image or Remotion card)
     image_path = None
     if images_enabled:
         try:
-            from src.image_generator import extract_image_props, generate_image
-            logger.info("Extracting image props from post…")
-            image_props = extract_image_props(post_text, topic)
-            logger.info("Rendering image card (headline: %s)…", image_props.get("headline", ""))
-            image_path = generate_image(image_props)
+            from src.image_generator import ENABLE_AI_IMAGES, generate_ai_post_image, extract_image_props, generate_image
+            if ENABLE_AI_IMAGES:
+                logger.info("Generating AI post image (ENABLE_AI_IMAGES=true)…")
+                image_path = generate_ai_post_image(post_text, topic)
+            else:
+                logger.info("Extracting image props from post…")
+                image_props = extract_image_props(post_text, topic)
+                logger.info("Rendering image card (headline: %s)…", image_props.get("headline", ""))
+                image_path = generate_image(image_props)
         except Exception as exc:
             logger.warning("Image generation failed — continuing with text-only post. Error: %s", exc)
             image_path = None

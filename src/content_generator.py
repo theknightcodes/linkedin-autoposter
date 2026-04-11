@@ -1,9 +1,10 @@
 """
 Generate LinkedIn post content.
 
-Supports two providers, selected by LLM_PROVIDER in .env:
-  - gemini  (default, FREE) — Google Gemini 2.0 Flash, 1500 req/day free tier
-  - claude  (paid)          — Anthropic Claude (sonnet / haiku)
+Provider priority (set LLM_PROVIDER in .env):
+  - openrouter (default, FREE) — OpenRouter.ai free models, single API key
+  - gemini  (fallback, FREE)   — Google Gemini 2.0 Flash, 1500 req/day free tier
+  - claude  (paid)             — Anthropic Claude (sonnet / haiku)
 """
 import logging
 import os
@@ -19,7 +20,13 @@ from src.config import (
 
 logger = logging.getLogger(__name__)
 
-PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
+PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").lower()
+
+_OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+_OPENROUTER_HEADERS = {
+    "HTTP-Referer": "https://github.com/DamyTheKnightKing/linkedin-autoposter",
+    "X-Title": "LinkedIn Autoposter",
+}
 
 
 def _load_system_prompt() -> str:
@@ -58,7 +65,36 @@ Requirements:
 Write only the post text. No preamble, no meta-commentary."""
 
 
-# ── Gemini (free) ─────────────────────────────────────────────────
+# ── OpenRouter (free — default provider) ──────────────────────────────────────
+
+def _generate_openrouter(topic: str, recent_posts: list[str]) -> str:
+    from openai import OpenAI
+
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    model   = os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-4-maverick:free")
+    if not api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY not set. Get a free key at https://openrouter.ai/keys"
+        )
+
+    client = OpenAI(
+        base_url=_OPENROUTER_BASE,
+        api_key=api_key,
+        default_headers=_OPENROUTER_HEADERS,
+    )
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _load_system_prompt()},
+            {"role": "user",   "content": _build_user_prompt(topic, recent_posts)},
+        ],
+        max_tokens=1200,
+        temperature=0.85,
+    )
+    return response.choices[0].message.content.strip()
+
+
+# ── Gemini (free fallback) ─────────────────────────────────────────────────────
 
 def _generate_gemini(topic: str, recent_posts: list[str]) -> str:
     from google import genai
@@ -81,14 +117,14 @@ def _generate_gemini(topic: str, recent_posts: list[str]) -> str:
             system_instruction=system_prompt,
             max_output_tokens=1200,
             temperature=0.85,
-            thinking_config=types.ThinkingConfig(thinking_budget=0),  # disable thinking mode
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         ),
         contents=user_prompt,
     )
     return response.text.strip()
 
 
-# ── Claude (paid) ─────────────────────────────────────────────────
+# ── Claude (paid) ─────────────────────────────────────────────────────────────
 
 def _generate_claude(topic: str, recent_posts: list[str]) -> str:
     import anthropic
@@ -109,7 +145,7 @@ def _generate_claude(topic: str, recent_posts: list[str]) -> str:
     return msg.content[0].text.strip()
 
 
-# ── Public API ─────────────────────────────────────────────────────
+# ── Public API ─────────────────────────────────────────────────────────────────
 
 def generate_post(topic: str, recent_posts: list[str]) -> str:
     """
@@ -119,12 +155,16 @@ def generate_post(topic: str, recent_posts: list[str]) -> str:
     """
     logger.info("Generating post — provider: %s, topic: %s", PROVIDER, topic)
 
-    if PROVIDER == "gemini":
+    if PROVIDER == "openrouter":
+        text = _generate_openrouter(topic, recent_posts)
+    elif PROVIDER == "gemini":
         text = _generate_gemini(topic, recent_posts)
     elif PROVIDER == "claude":
         text = _generate_claude(topic, recent_posts)
     else:
-        raise RuntimeError(f"Unknown LLM_PROVIDER '{PROVIDER}'. Use 'gemini' or 'claude'.")
+        raise RuntimeError(
+            f"Unknown LLM_PROVIDER '{PROVIDER}'. Use 'openrouter', 'gemini', or 'claude'."
+        )
 
     _validate(text, topic)
     return text

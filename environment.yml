@@ -6,7 +6,10 @@ dependencies:
   - python=3.11
   - pip
   - pip:
-    - anthropic>=0.30.0
+    - openai>=1.30.0         # OpenRouter (free LLM + image API)
+    - anthropic>=0.30.0      # Claude (paid, optional fallback)
+    - google-genai>=0.8.0    # Gemini (free text fallback)
+    - Pillow>=10.4.0         # AI image branding overlay (NEW)
     - requests>=2.31.0
     - flask>=3.0.0
     - python-dotenv>=1.0.0
