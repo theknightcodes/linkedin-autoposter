@@ -47,9 +47,8 @@ def generate_ai_post_image(post_text: str, topic: str, output_path: Optional[Pat
     Generate a contextual AI image for a LinkedIn post.
 
     Pipeline:
-        1. Try OpenRouter image API (free image-capable models)
-        2. Fallback → HuggingFace FLUX.1-schnell (free, Apache 2.0)
-        3. Fallback → Remotion card (existing branded design)
+        1. HuggingFace FLUX.1-schnell (free, Apache 2.0)
+        2. Fallback → Remotion card (existing branded design)
 
     A Pillow branding overlay (topic badge + @handle) is composited on AI images.
     Returns path to the final PNG.
@@ -65,22 +64,14 @@ def generate_ai_post_image(post_text: str, topic: str, output_path: Optional[Pat
     raw_image: Optional[bytes] = None
     source = "remotion"
 
-    # Layer 1: OpenRouter image API
+    # Layer 1: HuggingFace FLUX.1-schnell (free, Apache 2.0)
+    # Note: OpenRouter does not support image generation — HF FLUX is the primary AI source.
     try:
-        raw_image = _generate_image_openrouter(image_prompt)
-        source = "openrouter"
-        logger.info("AI image generated via OpenRouter")
+        raw_image = _generate_image_hf_flux(image_prompt)
+        source = "hf_flux"
+        logger.info("AI image generated via HF FLUX.1-schnell")
     except Exception as exc:
-        logger.warning("OpenRouter image failed (%s), trying HF FLUX...", exc)
-
-    # Layer 2: HuggingFace FLUX.1-schnell
-    if raw_image is None:
-        try:
-            raw_image = _generate_image_hf_flux(image_prompt)
-            source = "hf_flux"
-            logger.info("AI image generated via HF FLUX.1-schnell")
-        except Exception as exc:
-            logger.warning("HF FLUX failed (%s), falling back to Remotion card.", exc)
+        logger.warning("HF FLUX failed (%s), falling back to Remotion card.", exc)
 
     # Layer 3: Remotion card fallback
     if raw_image is None:
@@ -124,50 +115,6 @@ def _build_image_prompt(post_text: str, topic: str) -> str:
         "No text, no words, no watermarks. Photorealistic or minimal illustration. "
         "Wide format 1200x627 aspect ratio."
     )
-
-
-def _generate_image_openrouter(prompt: str) -> bytes:
-    """Generate image via OpenRouter API using image-capable free models."""
-    import requests
-
-    api_key = os.environ.get("OPENROUTER_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY not set")
-
-    # Use a model that supports image output
-    model = os.environ.get("OPENROUTER_IMAGE_MODEL", "black-forest-labs/FLUX-1-schnell")
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        **_OPENROUTER_HEADERS,
-    }
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "n": 1,
-        "size": "1024x1024",
-    }
-
-    resp = requests.post(
-        f"{_OPENROUTER_BASE}/images/generations",
-        headers=headers,
-        json=payload,
-        timeout=60,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-
-    # Handle base64 or URL response
-    image_data = data["data"][0]
-    if "b64_json" in image_data:
-        return base64.b64decode(image_data["b64_json"])
-    elif "url" in image_data:
-        img_resp = requests.get(image_data["url"], timeout=30)
-        img_resp.raise_for_status()
-        return img_resp.content
-    else:
-        raise RuntimeError(f"Unexpected image response format: {list(image_data.keys())}")
 
 
 def _generate_image_hf_flux(prompt: str) -> bytes:
@@ -218,7 +165,7 @@ def _add_branding_overlay(image_path: Path, topic: str, source: str) -> None:
     draw.text((20, h - bar_h + 18), f"#{topic_display}", font=font_bold, fill=(255, 255, 255, 230))
 
     # Attribution badge (top-right)
-    badge_text = "AI" if source in ("openrouter", "hf_flux") else "Card"
+    badge_text = "AI" if source == "hf_flux" else "Card"
     draw.rectangle([(w - 60, 10), (w - 10, 44)], fill=(79, 70, 229, 200))  # indigo
     draw.text((w - 50, 16), badge_text, font=font_small, fill=(255, 255, 255, 255))
 
