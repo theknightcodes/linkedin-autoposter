@@ -13,6 +13,7 @@ This will:
   5. Write everything to .env
 """
 import os
+import secrets
 import sys
 import time
 import webbrowser
@@ -35,7 +36,7 @@ SCOPES       = "w_member_social"
 AUTH_URL     = "https://www.linkedin.com/oauth/v2/authorization"
 TOKEN_URL    = "https://www.linkedin.com/oauth/v2/accessToken"
 PROFILE_URL  = "https://api.linkedin.com/v2/me"
-STATE        = "linkedin-autoposter-oauth"
+STATE        = secrets.token_urlsafe(32)  # Random per-run — prevents CSRF
 
 app = Flask(__name__)
 _result: dict = {}
