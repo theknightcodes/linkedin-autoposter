@@ -67,31 +67,56 @@ Write only the post text. No preamble, no meta-commentary."""
 
 # ── OpenRouter (free — default provider) ──────────────────────────────────────
 
+# Ordered fallback list — tried in sequence if upstream is rate-limited
+_FREE_MODEL_FALLBACKS = [
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemma-3-27b-it:free",
+    "google/gemma-4-31b-it:free",
+    "nousresearch/hermes-3-llama-3.1-405b:free",
+]
+
+
 def _generate_openrouter(topic: str, recent_posts: list[str]) -> str:
-    from openai import OpenAI
+    from openai import OpenAI, RateLimitError, NotFoundError
 
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
-    model   = os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-4-maverick:free")
     if not api_key:
         raise RuntimeError(
             "OPENROUTER_API_KEY not set. Get a free key at https://openrouter.ai/keys"
         )
 
+    primary = os.environ.get("OPENROUTER_MODEL", _FREE_MODEL_FALLBACKS[0])
+    models = [primary] + [m for m in _FREE_MODEL_FALLBACKS if m != primary]
+
     client = OpenAI(
         base_url=_OPENROUTER_BASE,
         api_key=api_key,
         default_headers=_OPENROUTER_HEADERS,
+        max_retries=0,  # we handle retries ourselves across models
     )
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": _load_system_prompt()},
-            {"role": "user",   "content": _build_user_prompt(topic, recent_posts)},
-        ],
-        max_tokens=1200,
-        temperature=0.85,
-    )
-    return response.choices[0].message.content.strip()
+    messages = [
+        {"role": "system", "content": _load_system_prompt()},
+        {"role": "user",   "content": _build_user_prompt(topic, recent_posts)},
+    ]
+
+    last_exc = None
+    for model in models:
+        try:
+            logger.info("OpenRouter: trying model %s", model)
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=1200,
+                temperature=0.85,
+            )
+            return response.choices[0].message.content.strip()
+        except (RateLimitError, NotFoundError) as exc:
+            logger.warning("OpenRouter model %s unavailable (%s), trying next...", model, exc.status_code)
+            last_exc = exc
+        except Exception as exc:
+            raise
+
+    raise RuntimeError(f"All OpenRouter free models failed: {last_exc}")
 
 
 # ── Gemini (free fallback) ─────────────────────────────────────────────────────
@@ -150,13 +175,18 @@ def _generate_claude(topic: str, recent_posts: list[str]) -> str:
 def generate_post(topic: str, recent_posts: list[str]) -> str:
     """
     Generate a LinkedIn post for the given topic.
+    When provider=openrouter, automatically falls back to Gemini if all free models fail.
     Raises ValueError if content fails validation.
-    Raises RuntimeError if the provider is misconfigured.
+    Raises RuntimeError if all providers are misconfigured or exhausted.
     """
     logger.info("Generating post — provider: %s, topic: %s", PROVIDER, topic)
 
     if PROVIDER == "openrouter":
-        text = _generate_openrouter(topic, recent_posts)
+        try:
+            text = _generate_openrouter(topic, recent_posts)
+        except RuntimeError as exc:
+            logger.warning("OpenRouter exhausted (%s) — falling back to Gemini.", exc)
+            text = _generate_gemini(topic, recent_posts)
     elif PROVIDER == "gemini":
         text = _generate_gemini(topic, recent_posts)
     elif PROVIDER == "claude":
