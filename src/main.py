@@ -82,6 +82,9 @@ def run(dry_run: bool = False, no_image: bool = False) -> None:
         except ValueError as exc:
             logger.warning("Validation failed: %s", exc)
             continue
+        except RuntimeError as exc:
+            logger.warning("All LLM providers unavailable: %s — skipping post this run.", exc)
+            sys.exit(0)  # graceful skip; next scheduled run will retry
 
         if is_duplicate(candidate):
             logger.warning("Duplicate detected on attempt %d. Regenerating.", attempt)
