@@ -70,9 +70,13 @@ Write only the post text. No preamble, no meta-commentary."""
 # Ordered fallback list — tried in sequence if upstream is rate-limited
 _FREE_MODEL_FALLBACKS = [
     "meta-llama/llama-3.3-70b-instruct:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
     "google/gemma-3-27b-it:free",
     "google/gemma-4-31b-it:free",
+    "mistralai/mistral-7b-instruct:free",
+    "qwen/qwen3-8b:free",
     "nousresearch/hermes-3-llama-3.1-405b:free",
+    "deepseek/deepseek-r1-0528:free",
 ]
 
 
@@ -121,9 +125,17 @@ def _generate_openrouter(topic: str, recent_posts: list[str]) -> str:
 
 # ── Gemini (free fallback) ─────────────────────────────────────────────────────
 
+_GEMINI_MODEL_FALLBACKS = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+]
+
+
 def _generate_gemini(topic: str, recent_posts: list[str]) -> str:
     from google import genai
     from google.genai import types
+    from google.genai.errors import ServerError
 
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -132,21 +144,35 @@ def _generate_gemini(topic: str, recent_posts: list[str]) -> str:
         )
 
     client = genai.Client(api_key=api_key)
-    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     system_prompt = _load_system_prompt()
     user_prompt   = _build_user_prompt(topic, recent_posts)
 
-    response = client.models.generate_content(
-        model=model_name,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            max_output_tokens=1200,
-            temperature=0.85,
-            thinking_config=types.ThinkingConfig(thinking_budget=0),
-        ),
-        contents=user_prompt,
-    )
-    return response.text.strip()
+    primary = os.getenv("GEMINI_MODEL", _GEMINI_MODEL_FALLBACKS[0])
+    models = [primary] + [m for m in _GEMINI_MODEL_FALLBACKS if m != primary]
+
+    last_exc = None
+    for model_name in models:
+        try:
+            logger.info("Gemini: trying model %s", model_name)
+            response = client.models.generate_content(
+                model=model_name,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=1200,
+                    temperature=0.85,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+                contents=user_prompt,
+            )
+            return response.text.strip()
+        except ServerError as exc:
+            if exc.status_code == 503:
+                logger.warning("Gemini model %s unavailable (503), trying next...", model_name)
+                last_exc = exc
+            else:
+                raise
+
+    raise RuntimeError(f"All Gemini models failed: {last_exc}")
 
 
 # ── Claude (paid) ─────────────────────────────────────────────────────────────
@@ -186,7 +212,17 @@ def generate_post(topic: str, recent_posts: list[str]) -> str:
             text = _generate_openrouter(topic, recent_posts)
         except RuntimeError as exc:
             logger.warning("OpenRouter exhausted (%s) — falling back to Gemini.", exc)
-            text = _generate_gemini(topic, recent_posts)
+            try:
+                text = _generate_gemini(topic, recent_posts)
+            except RuntimeError as gem_exc:
+                anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+                if anthropic_key:
+                    logger.warning("Gemini exhausted (%s) — falling back to Claude.", gem_exc)
+                    text = _generate_claude(topic, recent_posts)
+                else:
+                    raise RuntimeError(
+                        f"All free providers exhausted. OpenRouter: {exc} | Gemini: {gem_exc}"
+                    ) from gem_exc
     elif PROVIDER == "gemini":
         text = _generate_gemini(topic, recent_posts)
     elif PROVIDER == "claude":
