@@ -76,7 +76,6 @@ _FREE_MODEL_FALLBACKS = [
     "mistralai/mistral-7b-instruct:free",
     "qwen/qwen3-8b:free",
     "nousresearch/hermes-3-llama-3.1-405b:free",
-    "deepseek/deepseek-r1-0528:free",
 ]
 
 
@@ -166,11 +165,8 @@ def _generate_gemini(topic: str, recent_posts: list[str]) -> str:
             )
             return response.text.strip()
         except ServerError as exc:
-            if exc.status_code == 503:
-                logger.warning("Gemini model %s unavailable (503), trying next...", model_name)
-                last_exc = exc
-            else:
-                raise
+            logger.warning("Gemini model %s unavailable (5xx), trying next...", model_name)
+            last_exc = exc
 
     raise RuntimeError(f"All Gemini models failed: {last_exc}")
 
