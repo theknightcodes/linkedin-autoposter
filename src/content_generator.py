@@ -80,7 +80,7 @@ _FREE_MODEL_FALLBACKS = [
 
 
 def _generate_openrouter(topic: str, recent_posts: list[str]) -> str:
-    from openai import OpenAI, RateLimitError, NotFoundError
+    from openai import OpenAI, RateLimitError, NotFoundError, AuthenticationError
 
     api_key = os.environ.get("OPENROUTER_API_KEY", "")
     if not api_key:
@@ -116,6 +116,10 @@ def _generate_openrouter(topic: str, recent_posts: list[str]) -> str:
         except (RateLimitError, NotFoundError) as exc:
             logger.warning("OpenRouter model %s unavailable (%s), trying next...", model, exc.status_code)
             last_exc = exc
+        except AuthenticationError as exc:
+            raise RuntimeError(
+                f"OpenRouter authentication failed (401 — invalid or missing OPENROUTER_API_KEY): {exc}"
+            ) from exc
         except Exception as exc:
             raise
 
