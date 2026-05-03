@@ -1,8 +1,8 @@
 name: LinkedIn Post
 
 on:
-  schedule:
-    - cron: '30 0 * * 2,4'   # 08:30 SGT = 00:30 UTC — Tuesday & Thursday only
+  #schedule:
+    #- cron: '30 0 * * 2,4'   # 08:30 SGT = 00:30 UTC — Tuesday & Thursday only
   workflow_dispatch:           # manual trigger from GitHub UI
 
 jobs:
